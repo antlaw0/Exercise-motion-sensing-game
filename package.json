@@ -1,0 +1,22 @@
+{
+  "name": "exercise-motion-sensing-game",
+  "version": "1.0.0",
+  "description": "Web-based vision accessible exercise boxing game with motion sensing via smartphone",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "game",
+    "motion",
+    "accessibility",
+    "boxing",
+    "phaser"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2"
+  }
+}
