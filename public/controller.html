@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Boxing Trainer – Phone Controller</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <style>
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 1rem; padding: 1rem; }
+    #setup, #controller { width: 100%; max-width: 400px; text-align: center; }
+    .hand-btn { width: 45%; padding: 2rem 1rem; font-size: 1.4rem; font-weight: bold; border: none; border-radius: 12px; cursor: pointer; margin: 0.5rem; }
+    .hand-btn.left  { background: #e74c3c; color: #fff; }
+    .hand-btn.right { background: #3498db; color: #fff; }
+    #punch-btn  { width: 90%; padding: 4rem 1rem; font-size: 2rem; font-weight: bold; border: none; border-radius: 16px; background: #e74c3c; color: #fff; cursor: pointer; margin: 1rem 0; touch-action: manipulation; }
+    #guard-btn  { width: 90%; padding: 3rem 1rem; font-size: 1.6rem; font-weight: bold; border: none; border-radius: 16px; background: #2980b9; color: #fff; cursor: pointer; margin: 0.5rem 0; touch-action: manipulation; user-select: none; }
+    #guard-btn.active { background: #00c170; }
+    #motion-status { font-size: 1rem; color: #aaa; margin: 0.5rem 0; min-height: 3rem; }
+    #conn-status   { font-size: 0.9rem; padding: 0.5rem; border-radius: 8px; background: #222; }
+    #conn-status.ok { color: #00ff88; }
+    #conn-status.err { color: #ff6666; }
+    .label { font-size: 1.1rem; color: #ccc; margin-bottom: 0.3rem; }
+  </style>
+</head>
+<body>
+  <!-- Step 1: choose hand -->
+  <div id="setup">
+    <h1 style="color:#FFD700;font-size:1.8rem;margin-bottom:0.5rem;">🥊 Boxing Trainer</h1>
+    <p style="color:#ccc;">Which wrist is this phone strapped to?</p>
+    <button class="hand-btn left"  id="leftBtn"  aria-label="Select left hand">LEFT<br/>HAND</button>
+    <button class="hand-btn right" id="rightBtn" aria-label="Select right hand">RIGHT<br/>HAND</button>
+    <p id="setup-status" style="color:#aaa;font-size:0.9rem;margin-top:1rem;"></p>
+  </div>
+
+  <!-- Step 2: controller UI -->
+  <div id="controller" hidden>
+    <p class="label" id="hand-label">LEFT HAND CONTROLLER</p>
+    <div id="conn-status" class="err">Connecting…</div>
+
+    <p style="color:#aaa;font-size:0.9rem;margin:0.5rem 0;">Swing your arm to PUNCH (auto-detected)<br/>or tap button for manual:</p>
+    <button id="punch-btn" aria-label="Punch">PUNCH 👊</button>
+
+    <p style="color:#aaa;font-size:0.9rem;margin:0.5rem 0;">Hold to GUARD:</p>
+    <button id="guard-btn" aria-label="Guard – hold to block">GUARD 🛡️</button>
+
+    <div id="motion-status" aria-live="polite"></div>
+    <p style="color:#555;font-size:0.8rem;">Motion sensor: <span id="motion-perm">—</span></p>
+  </div>
+
+  <script src="/js/motion.js"></script>
+  <script>
+    'use strict';
+
+    const setupEl     = document.getElementById('setup');
+    const controllerEl = document.getElementById('controller');
+    const handLabel   = document.getElementById('hand-label');
+    const connStatus  = document.getElementById('conn-status');
+    const motionStatus = document.getElementById('motion-status');
+    const motionPerm  = document.getElementById('motion-perm');
+    const punchBtn    = document.getElementById('punch-btn');
+    const guardBtn    = document.getElementById('guard-btn');
+    const setupStatus = document.getElementById('setup-status');
+
+    let hand = null;
+    let ws = null;
+    let detector = null;
+
+    function selectHand(h) {
+      hand = h;
+      handLabel.textContent = `${h.toUpperCase()} HAND CONTROLLER`;
+      setupEl.hidden = true;
+      controllerEl.hidden = false;
+      connectWS();
+      requestMotionPermission();
+    }
+
+    document.getElementById('leftBtn').addEventListener('click', () => selectHand('left'));
+    document.getElementById('rightBtn').addEventListener('click', () => selectHand('right'));
+
+    // ── WebSocket ──────────────────────────────────────────────────
+    function connectWS() {
+      const url = `ws://${window.location.host}`;
+      ws = new WebSocket(url);
+
+      ws.addEventListener('open', () => {
+        ws.send(JSON.stringify({ type: 'register', role: hand }));
+        connStatus.textContent = `✓ Connected as ${hand.toUpperCase()} controller`;
+        connStatus.className = 'ok';
+      });
+
+      ws.addEventListener('message', (evt) => {
+        try {
+          const msg = JSON.parse(evt.data);
+          if (msg.type === 'registered') {
+            connStatus.textContent = `✓ ${hand.toUpperCase()} hand registered`;
+            connStatus.className = 'ok';
+          }
+        } catch (_) {}
+      });
+
+      ws.addEventListener('close', () => {
+        connStatus.textContent = '⚠ Disconnected – refresh to reconnect';
+        connStatus.className = 'err';
+      });
+
+      ws.addEventListener('error', () => {
+        connStatus.textContent = '⚠ Connection error';
+        connStatus.className = 'err';
+      });
+    }
+
+    function sendAction(action, force) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'action', action, force: force || 0.7 }));
+      }
+    }
+
+    // ── Motion detection ───────────────────────────────────────────
+    function startMotion() {
+      detector = new MotionDetector({ punchThreshold: 15, cooldownMs: 600 });
+      detector.onPunch = (h, force) => {
+        motionStatus.textContent = `💥 PUNCH detected! force: ${(force * 100).toFixed(0)}%`;
+        sendAction('punch', force);
+        punchBtn.style.transform = 'scale(0.93)';
+        setTimeout(() => { punchBtn.style.transform = ''; }, 150);
+      };
+
+      window.addEventListener('devicemotion', (evt) => {
+        const acc = evt.accelerationIncludingGravity;
+        if (!acc) return;
+        detector.process({ x: acc.x, y: acc.y, z: acc.z }, hand);
+        // Guard via tilt: if beta (front-back tilt) > 60° arm is likely raised
+        if (evt.rotationRate) {
+          // handled via button for prototype reliability
+        }
+      });
+
+      motionPerm.textContent = 'active ✓';
+    }
+
+    function requestMotionPermission() {
+      // iOS 13+ requires explicit permission
+      if (typeof DeviceMotionEvent !== 'undefined' &&
+          typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission()
+          .then((state) => {
+            motionPerm.textContent = state;
+            if (state === 'granted') startMotion();
+          })
+          .catch(() => { motionPerm.textContent = 'denied'; });
+      } else if (typeof DeviceMotionEvent !== 'undefined') {
+        startMotion();
+      } else {
+        motionPerm.textContent = 'not supported';
+      }
+    }
+
+    // ── Manual punch button ────────────────────────────────────────
+    punchBtn.addEventListener('click', () => {
+      motionStatus.textContent = '👊 Manual punch';
+      sendAction('punch', 0.7);
+    });
+
+    // ── Guard button (hold) ────────────────────────────────────────
+    function guardOn() {
+      guardBtn.classList.add('active');
+      guardBtn.textContent = 'GUARDING 🛡️';
+      sendAction('guard_on');
+    }
+    function guardOff() {
+      guardBtn.classList.remove('active');
+      guardBtn.textContent = 'GUARD 🛡️';
+      sendAction('guard_off');
+    }
+    guardBtn.addEventListener('mousedown', guardOn);
+    guardBtn.addEventListener('touchstart', (e) => { e.preventDefault(); guardOn(); });
+    guardBtn.addEventListener('mouseup', guardOff);
+    guardBtn.addEventListener('mouseleave', guardOff);
+    guardBtn.addEventListener('touchend', guardOff);
+    guardBtn.addEventListener('touchcancel', guardOff);
+  </script>
+</body>
+</html>
